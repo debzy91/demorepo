@@ -1,31 +1,29 @@
 name: Dependency check (neutral waiting)
 
 on:
-  # Run when a PR to dev is opened/updated
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-  # Also run when the dependent target branch gets updated (e.g., fb-dep-1 merged to dep-test)
   push:
     branches:
-      - dep-test
-  # Allow manual re-run from Actions tab
-  workflow_dispatch:
+      - dep-test    # when fb-dep-1 merges here, recheck automatically
+  workflow_dispatch:  # allows manual rerun
 
 permissions:
-  checks: write
   contents: read
+  checks: write
+  statuses: write   # <--- added so we can post commit status
 
 jobs:
   check-dependency:
     name: Check dependency merge status
     runs-on: ubuntu-latest
 
-    # Only run this logic for PRs targeting the dev branch
+    # Run only for PRs targeting dev
     if: github.event_name != 'pull_request' || github.event.pull_request.base.ref == 'dev'
 
     env:
-      DEPENDENT_BRANCH: fb-dep-1    # branch that must be merged first
-      TARGET_BRANCH: dep-test       # base branch where dependency should be merged
+      DEPENDENT_BRANCH: fb-dep-1      # branch that must be merged first
+      TARGET_BRANCH: dep-test         # branch where dependency should merge
       CHECK_NAME: test-dependency-check
 
     steps:
@@ -54,7 +52,6 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
           else
-            # fallback (e.g., push event)
             echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
           fi
 
@@ -65,7 +62,6 @@ jobs:
           NAME="${CHECK_NAME}"
           API="https://api.github.com/repos/${REPO}/check-runs"
 
-          # Determine check output
           if [ "${{ steps.detect.outputs.merged }}" = "true" ]; then
             SUMMARY="✅ ${DEPENDENT_BRANCH} is merged into ${TARGET_BRANCH}."
             CONCLUSION="success"
@@ -76,7 +72,6 @@ jobs:
             TITLE="Waiting for dependency"
           fi
 
-          # Find existing check run (if any)
           EXISTING=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/commits/${SHA}/check-runs" \
@@ -105,3 +100,27 @@ jobs:
                 \"output\": { \"title\": \"${TITLE}\", \"summary\": \"${SUMMARY}\" }
               }" | jq '.' || true
           fi
+
+      - name: Set commit status for branch protection visibility
+        run: |
+          REPO="${{ github.repository }}"
+          SHA="${{ steps.prsha.outputs.sha }}"
+          STATUS_API="https://api.github.com/repos/${REPO}/statuses/${SHA}"
+
+          if [ "${{ steps.detect.outputs.merged }}" = "true" ]; then
+            STATE="success"
+            DESC="✅ ${DEPENDENT_BRANCH} is merged into ${TARGET_BRANCH}"
+          else
+            STATE="pending"
+            DESC="⏳ Waiting: ${DEPENDENT_BRANCH} not merged into ${TARGET_BRANCH}"
+          fi
+
+          curl -s -X POST "${STATUS_API}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{
+              \"state\": \"${STATE}\",
+              \"context\": \"${CHECK_NAME}\",
+              \"description\": \"${DESC}\",
+              \"target_url\": \"https://github.com/${REPO}/actions/runs/${{ github.run_id }}\"
+            }" | jq '.' || true
