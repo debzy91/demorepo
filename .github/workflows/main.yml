@@ -14,7 +14,7 @@ jobs:
   check-dependency:
     runs-on: ubuntu-latest
     env:
-      DEPENDENT_BRANCH: fb-dep-test-1     # <-- change this to the branch that must be merged first
+      DEPENDENT_BRANCH: fb-dep-1     # <-- change this to the branch that must be merged first
       TARGET_BRANCH: dep-test          # <-- change this to the base branch (where dependency must be merged into)
       CHECK_NAME: "test-dependency-dev" # displayed in PR checks; update as wanted
     steps:
